@@ -514,6 +514,8 @@ public:
 			ss << "#version " << Utils::to_string(_glinfo.majorVersion) << Utils::to_string(_glinfo.minorVersion) << "0 es " << std::endl;
 			if (_glinfo.noPerspective)
 				ss << "#extension GL_NV_shader_noperspective_interpolation : enable" << std::endl;
+			if (_glinfo.dual_source_blending)
+				ss << "#extension GL_EXT_blend_func_extended : enable" << std::endl;
 			if (config.frameBufferEmulation.N64DepthCompare == Config::dcFast) {
 				if (_glinfo.imageTextures && _glinfo.fragment_interlockNV) {
 					ss << "#extension GL_NV_fragment_shader_interlock : enable" << std::endl
@@ -560,21 +562,40 @@ public:
 class ShaderBlender1 : public ShaderPart
 {
 public:
-	ShaderBlender1()
+	ShaderBlender1(const opengl::GLInfo & _glinfo)
 	{
 #if 1
-			m_part =
-				"  #define MUXA(pos) dot(muxA, STVEC(pos))				\n"
-				"  #define MUXB(pos) dot(muxB, STVEC(pos))				\n"
-				"  #define MUXPM(pos) muxPM*(STVEC(pos))				\n"
-				"  muxPM[0] = clampedColor;								\n"
-				"  if (uForceBlendCycle1 != 0) {						\n"
-				"    muxA[0] = clampedColor.a;							\n"
-				"    muxB[0] = 1.0 - MUXA(uBlendMux1[1]);				\n"
-				"    lowp vec4 blend1 = MUXPM(uBlendMux1[0]) * MUXA(uBlendMux1[1]) + MUXPM(uBlendMux1[2]) * MUXB(uBlendMux1[3]);	\n"
-				"    clampedColor.rgb = clamp(blend1.rgb, 0.0, 1.0);	\n"
-				"  } else clampedColor.rgb = (MUXPM(uBlendMux1[0])).rgb;	\n"
+		m_part =
+			"  srcColor1 = vec4(0.0);									\n"
+			"  dstFactor1 = 0.0;										\n"
+			"  muxPM[0] = clampedColor;									\n"
+			"  muxA[0] = clampedColor.a;								\n"
+			"  muxa = MUXA(uBlendMux1[1]);								\n"
+			"  muxB[0] = 1.0 - muxa;									\n"
+			"  muxb = MUXB(uBlendMux1[3]);								\n"
+			"  muxp = MUXPM(uBlendMux1[0]);								\n"
+			"  muxm = MUXPM(uBlendMux1[2]);								\n"
+			"  muxaf = MUXF(uBlendMux1[0]);								\n"
+			"  muxbf = MUXF(uBlendMux1[2]);								\n"
+			"  if (uForceBlendCycle1 != 0) {							\n"
+			"    srcColor1 = muxp * muxa + muxm * muxb;					\n"
+			"    dstFactor1 = muxaf * muxa + muxbf * muxb;				\n"
+			"    srcColor1 = clamp(srcColor1, 0.0, 1.0);				\n"
+			"  } else {													\n"
+			"    srcColor1 = muxp;										\n"
+			"    dstFactor1 = muxaf;									\n"
+			"  }														\n"
+			;
+		if (_glinfo.dual_source_blending) {
+			m_part +=
+				"  fragColor = srcColor1;								\n"
+				"  fragColor1 = vec4(dstFactor1);						\n"
 				;
+		} else {
+			m_part +=
+				"  fragColor = vec4(srcColor1.rgb, clampedColor.a);	\n"
+				;
+		}
 #else
 		// Keep old code for reference
 		m_part =
@@ -593,19 +614,41 @@ public:
 class ShaderBlender2 : public ShaderPart
 {
 public:
-	ShaderBlender2()
+	ShaderBlender2(const opengl::GLInfo & _glinfo)
 	{
 #if 1
 		m_part =
-			"  muxPM[0] = clampedColor;								\n"
-			"  muxPM[1] = vec4(0.0);								\n"
-			"  if (uForceBlendCycle2 != 0) {						\n"
-			"    muxA[0] = clampedColor.a;							\n"
-			"    muxB[0] = 1.0 - MUXA(uBlendMux2[1]);				\n"
-			"    lowp vec4 blend2 = MUXPM(uBlendMux2[0]) * MUXA(uBlendMux2[1]) + MUXPM(uBlendMux2[2]) * MUXB(uBlendMux2[3]);	\n"
-			"    clampedColor.rgb = clamp(blend2.rgb, 0.0, 1.0);	\n"
-			"  } else clampedColor.rgb = (MUXPM(uBlendMux2[0])).rgb;	\n"
+			"  srcColor2 = vec4(0.0);									\n"
+			"  dstFactor2 = 0.0;										\n"
+			"  muxPM[0] = srcColor1;									\n"
+			"  muxa = MUXA(uBlendMux2[1]);								\n"
+			"  muxB[0] = 1.0 - muxa;									\n"
+			"  muxb = MUXB(uBlendMux2[3]);								\n"
+			"  muxp = MUXPM(uBlendMux2[0]);								\n"
+			"  muxm = MUXPM(uBlendMux2[2]);								\n"
+			"  muxF[0] = dstFactor1;									\n"
+			"  muxaf = MUXF(uBlendMux2[0]);								\n"
+			"  muxbf = MUXF(uBlendMux2[2]);								\n"
+			"  if (uForceBlendCycle2 != 0) {							\n"
+			"    srcColor2 = muxp * muxa + muxm * muxb;					\n"
+			"    dstFactor2 = muxaf * muxa + muxbf * muxb;				\n"
+			"    srcColor2 = clamp(srcColor2, 0.0, 1.0);				\n"
+			"  } else {													\n"
+			"    srcColor2 = muxp;										\n"
+			"    dstFactor2 = muxaf;									\n"
+			"  }														\n"
 			;
+		if (_glinfo.dual_source_blending) {
+			m_part +=
+				"  fragColor = srcColor2;								\n"
+				"  fragColor1 = vec4(dstFactor2);						\n"
+				;
+		} else {
+			m_part +=
+				"  fragColor =  vec4(srcColor2.rgb, clampedColor.a);	\n"
+				;
+		}
+
 #else
 		// Keep old code for reference
 		m_part =
@@ -619,6 +662,26 @@ public:
 			"  } else clampedColor.rgb = muxPM[uBlendMux2[0]].rgb;	\n"
 			;
 #endif
+	}
+};
+
+class ShaderBlenderAlpha : public ShaderPart
+{
+public:
+	ShaderBlenderAlpha(const opengl::GLInfo & _glinfo)
+	{
+		if (_glinfo.dual_source_blending)
+		m_part +=
+			"if (uBlendAlphaMode != 2) {							\n"
+			"  lowp float cvg = clampedColor.a;						\n"
+			"  lowp vec4 srcAlpha = vec4(cvg, cvg, 1.0, 0.0);		\n"
+			"  lowp vec4 dstFactorAlpha = vec4(1.0, 1.0, 0.0, 1.0);	\n"
+			"  if (uBlendAlphaMode == 0)							\n"
+			"    dstFactorAlpha[0] = 0.0;							\n"
+			"  fragColor.a = srcAlpha[uCvgDest];					\n"
+			"  fragColor1.a = dstFactorAlpha[uCvgDest];				\n"
+			"} else fragColor.a = clampedColor.a;					\n"
+			;
 	}
 };
 
@@ -869,9 +932,11 @@ public:
 			"uniform lowp int uScreenSpaceTriangle;	\n"
 			"highp vec2 texCoord0;					\n"
 			"highp vec2 texCoord1;					\n"
-			"highp vec2[5] tcData0;					\n"
-			"highp vec2[5] tcData1;					\n"
-		;
+			"highp vec2 tcData0[5];					\n"
+			"highp vec2 tcData1[5];					\n"
+			"uniform lowp int uCvgDest;				\n"
+			"uniform lowp int uBlendAlphaMode;		\n"
+			;
 
 		if (config.generalEmulation.enableLegacyBlending != 0) {
 			m_part +=
@@ -924,15 +989,21 @@ public:
 			"IN lowp float vNumLights;		\n"
 		;
 
-		if (config.frameBufferEmulation.N64DepthCompare == Config::dcFast && _glinfo.ext_fetch) {
+		if (_glinfo.dual_source_blending) {
 			m_part +=
-				"layout(location = 0) OUT lowp vec4 fragColor;		\n"
-				"layout(location = 1) inout highp vec4 depthZ;		\n"
-				"layout(location = 2) inout highp vec4 depthDeltaZ;	\n"
+				"layout(location = 0, index = 0) OUT lowp vec4 fragColor; 	\n"
+				"layout(location = 0, index = 1) OUT lowp vec4 fragColor1;	\n"
 			;
 		} else {
 			m_part +=
 				"OUT lowp vec4 fragColor;	\n"
+			;
+		}
+
+		if (config.frameBufferEmulation.N64DepthCompare == Config::dcFast && _glinfo.ext_fetch) {
+			m_part +=
+				"layout(location = 1) inout highp vec4 depthZ;	\n"
+				"layout(location = 2) inout highp vec4 depthDeltaZ;	\n"
 				;
 		}
 	}
@@ -964,6 +1035,9 @@ public:
 			"uniform highp float uPrimDepth;		\n"
 			"uniform mediump vec2 uScreenScale;		\n"
 			"uniform lowp int uScreenSpaceTriangle;	\n"
+			"uniform lowp int uCvgDest; \n"
+			"uniform lowp int uBlendAlphaMode; \n"
+
 		;
 
 		if (config.generalEmulation.enableLegacyBlending != 0) {
@@ -1006,15 +1080,21 @@ public:
 			"IN lowp float vNumLights;	\n"
 		;
 
-		if (config.frameBufferEmulation.N64DepthCompare == Config::dcFast && _glinfo.ext_fetch) {
+		if (_glinfo.dual_source_blending) {
 			m_part +=
-				"layout(location = 0) OUT lowp vec4 fragColor;		\n"
-				"layout(location = 1) inout highp vec4 depthZ;		\n"
-				"layout(location = 2) inout highp vec4 depthDeltaZ;	\n"
+				"layout(location = 0, index = 0) OUT lowp vec4 fragColor; 	\n"
+				"layout(location = 0, index = 1) OUT lowp vec4 fragColor1;	\n"
 			;
 		} else {
 			m_part +=
 				"OUT lowp vec4 fragColor;	\n"
+			;
+		}
+
+		if (config.frameBufferEmulation.N64DepthCompare == Config::dcFast && _glinfo.ext_fetch) {
+			m_part +=
+				"layout(location = 1) inout highp vec4 depthZ;	\n"
+				"layout(location = 2) inout highp vec4 depthDeltaZ;	\n"
 				;
 		}
 	}
@@ -1083,8 +1163,8 @@ public:
 			"highp vec2 clampWrapMirror(in highp vec2 vTexCoord,	\n"
 			"	in highp vec2 vWrap, in highp vec2 vClamp,			\n"
 			"	in lowp vec2 vClampEn, in lowp vec2 vMirrorEn );	\n"
-			"highp vec2[5] textureEngine0(in highp vec2 texCoord);	\n"
-			"highp vec2[5] textureEngine1(in highp vec2 texCoord);	\n"
+			"void textureEngine0(in highp vec2 texCoord, out highp vec2 tcData[5]); \n"
+			"void textureEngine1(in highp vec2 texCoord, out highp vec2 tcData[5]); \n"
 			;
 	}
 };
@@ -1103,7 +1183,7 @@ public:
 			(g_cycleType == G_CYC_COPY || g_textureConvert.useTextureFiltering()))
 		{
 			shader <<
-				"lowp vec4 readTexMS(in lowp sampler2DMS mstex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha);\n";
+				"lowp vec4 readTexMS(in lowp sampler2DMS mstex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha);\n";
 		}
 	}
 
@@ -1150,7 +1230,6 @@ public:
 
 class ShaderFragmentHeaderReadTex : public ShaderPart
 {
-#define USE_TEX_WORKAROUND // Enable workaround for issue with Mario Tennis Intro
 public:
 	ShaderFragmentHeaderReadTex(const opengl::GLInfo & _glinfo) : m_glinfo(_glinfo)
 	{
@@ -1177,18 +1256,10 @@ public:
 						"#define TEX_FILTER(name, tex, tcData)												\\\n"
 						"  {																					\\\n"
 						"  lowp float bottomRightTri = step(1.0, tcData[4].s + tcData[4].t);					\\\n"
-#ifndef USE_TEX_WORKAROUND
 						"  lowp vec4 c00 = texelFetch(tex, ivec2(tcData[0]), 0); \\\n"
 						"  lowp vec4 c01 = texelFetch(tex, ivec2(tcData[1]), 0); \\\n"
 						"  lowp vec4 c10 = texelFetch(tex, ivec2(tcData[2]), 0); \\\n"
 						"  lowp vec4 c11 = texelFetch(tex, ivec2(tcData[3]), 0); \\\n"
-#else
-						"  lowp vec2 texSize = vec2(textureSize(tex,0)); \\\n"
-						"  lowp vec4 c00 = texture(tex, (tcData[0] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c01 = texture(tex, (tcData[1] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c10 = texture(tex, (tcData[2] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c11 = texture(tex, (tcData[3] + 0.5)/texSize); \\\n"
-#endif
 						"  lowp vec4 c0 = c00 + tcData[4].s*(c10-c00) + tcData[4].t*(c01-c00);			\\\n"
 						"  lowp vec4 c1 = c11 + (1.0-tcData[4].s)*(c01-c11) + (1.0-tcData[4].t)*(c10-c11); \\\n"
 						"  name = c0 + bottomRightTri * (c1-c0); \\\n"
@@ -1199,18 +1270,10 @@ public:
 					shaderPart +=
 						"#define TEX_FILTER(name, tex, tcData)																		\\\n"
 						"{																											\\\n"
-#ifndef USE_TEX_WORKAROUND
 						"  lowp vec4 c00 = texelFetch(tex, ivec2(tcData[0]), 0); \\\n"
 						"  lowp vec4 c01 = texelFetch(tex, ivec2(tcData[1]), 0); \\\n"
 						"  lowp vec4 c10 = texelFetch(tex, ivec2(tcData[2]), 0); \\\n"
 						"  lowp vec4 c11 = texelFetch(tex, ivec2(tcData[3]), 0); \\\n"
-#else
-						"  lowp vec2 texSize = vec2(textureSize(tex,0)); \\\n"
-						"  lowp vec4 c00 = texture(tex, (tcData[0] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c01 = texture(tex, (tcData[1] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c10 = texture(tex, (tcData[2] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c11 = texture(tex, (tcData[3] + 0.5)/texSize); \\\n"
-#endif
 						"  lowp vec4 c0 = c00 + tcData[4].s * (c10-c00);						\\\n"
 						"  lowp vec4 c1 = c01 + tcData[4].s * (c11-c01);						\\\n"
 						"  name = c0 + tcData[4].t * (c1-c0);									\\\n"
@@ -1225,18 +1288,10 @@ public:
 						"#define TEX_FILTER(name, tex, tcData)												\\\n"
 						"{																						\\\n"
 						"  lowp float bottomRightTri = step(1.0, tcData[4].s + tcData[4].t);					\\\n"
-#ifndef USE_TEX_WORKAROUND
 						"  lowp vec4 c00 = texelFetch(tex, ivec2(tcData[0]), 0);								\\\n"
 						"  lowp vec4 c01 = texelFetch(tex, ivec2(tcData[1]), 0);								\\\n"
 						"  lowp vec4 c10 = texelFetch(tex, ivec2(tcData[2]), 0);								\\\n"
 						"  lowp vec4 c11 = texelFetch(tex, ivec2(tcData[3]), 0);								\\\n"
-#else
-						"  lowp vec2 texSize = vec2(textureSize(tex,0)); \\\n"
-						"  lowp vec4 c00 = texture(tex, (tcData[0] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c01 = texture(tex, (tcData[1] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c10 = texture(tex, (tcData[2] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c11 = texture(tex, (tcData[3] + 0.5)/texSize); \\\n"
-#endif
 						"  if(uEnableAlphaTest == 1 ){															\\\n" // Calculate premultiplied color values
 						"    c00.rgb *= c00.a;																	\\\n"
 						"    c01.rgb *= c01.a;																	\\\n"
@@ -1254,18 +1309,10 @@ public:
 					shaderPart +=
 						"#define TEX_FILTER(name, tex, tcData)																	\\\n"
 						"{																										\\\n"
-#ifndef USE_TEX_WORKAROUND
 						"  lowp vec4 c00 = texelFetch(tex, ivec2(tcData[0]), 0);												\\\n"
 						"  lowp vec4 c01 = texelFetch(tex, ivec2(tcData[1]), 0);												\\\n"
 						"  lowp vec4 c10 = texelFetch(tex, ivec2(tcData[2]), 0);												\\\n"
 						"  lowp vec4 c11 = texelFetch(tex, ivec2(tcData[3]), 0);												\\\n"
-#else
-						"  lowp vec2 texSize = vec2(textureSize(tex,0)); \\\n"
-						"  lowp vec4 c00 = texture(tex, (tcData[0] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c01 = texture(tex, (tcData[1] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c10 = texture(tex, (tcData[2] + 0.5)/texSize); \\\n"
-						"  lowp vec4 c11 = texture(tex, (tcData[3] + 0.5)/texSize); \\\n"
-#endif
 						"  if(uEnableAlphaTest == 1){																			\\\n" // Calculate premultiplied color values
 						"    c00.rgb *= c00.a;																					\\\n"
 						"    c01.rgb *= c01.a;																					\\\n"
@@ -1275,7 +1322,7 @@ public:
 						"  lowp vec4 c0 = c00 + tcData[4].s * (c10-c00);														\\\n"
 						"  lowp vec4 c1 = c01 + tcData[4].s * (c11-c01);														\\\n"
 						"  name = c0 + tcData[4].t * (c1-c0);																	\\\n"
-						"  if(uEnableAlphaTest == 1)  name.rgb /= name.a;														\\\n" 
+						"  if(uEnableAlphaTest == 1)  name.rgb /= name.a;														\\\n"
 						"}																										\n"
 						;
 				break;
@@ -1338,7 +1385,7 @@ public:
 			if (g_textureConvert.useTextureFiltering()) {
 				shaderPart +=
 					"uniform lowp int uTextureFilterMode;								\n"
-					"lowp vec4 readTex(in sampler2D tex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha);	\n"
+					"lowp vec4 readTex(in sampler2D tex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha);	\n"
 					;
 			}
 			if (g_textureConvert.useYUVCoversion()) {
@@ -1346,7 +1393,7 @@ public:
 					"uniform lowp ivec2 uTextureFormat;									\n"
 					"uniform lowp int uTextureConvert;									\n"
 					"uniform mediump ivec4 uConvertParams;								\n"
-					"lowp vec4 YUV_Convert(in sampler2D tex, in highp vec2[5] tcData, in lowp int convert, in lowp int format, in lowp vec4 prev);	\n"
+					"lowp vec4 YUV_Convert(in sampler2D tex, in highp vec2 tcData[5], in lowp int convert, in lowp int format, in lowp vec4 prev);	\n"
 					;
 			}
 		}
@@ -1385,7 +1432,7 @@ public:
 				;
 		} else {
 			m_part =
-				"lowp vec4 readTex(in sampler2D tex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha);	\n"
+				"lowp vec4 readTex(in sampler2D tex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha);	\n"
 			;
 		}
 	}
@@ -1451,9 +1498,16 @@ public:
 	{
 		if (config.generalEmulation.enableLegacyBlending == 0) {
 			m_part =
+				"  #define MUXA(pos) dot(muxA, STVEC(pos))									\n"
+				"  #define MUXB(pos) dot(muxB, STVEC(pos))									\n"
+				"  #define MUXPM(pos) muxPM*(STVEC(pos))									\n"
+				"  #define MUXF(pos) dot(muxF, STVEC(pos))									\n"
 				"  lowp mat4 muxPM = mat4(vec4(0.0), vec4(0.0), uBlendColor, uFogColor);	\n"
 				"  lowp vec4 muxA = vec4(0.0, uFogColor.a, shadeColor.a, 0.0);				\n"
 				"  lowp vec4 muxB = vec4(0.0, 1.0, 1.0, 0.0);								\n"
+				"  lowp vec4 muxF = vec4(0.0, 1.0, 0.0, 0.0);								\n"
+				"  lowp vec4 muxp, muxm, srcColor1, srcColor2;								\n"
+				"  lowp float muxa, muxb, dstFactor1, dstFactor2, muxaf, muxbf;				\n"
 			;
 		}
 	}
@@ -1854,8 +1908,9 @@ public:
 	ShaderMipmap(const opengl::GLInfo & _glinfo)
 	{
 		if (_glinfo.isGLES2) {
-			"uniform mediump vec2 uTextureSize[2];										\n"
-				"lowp vec4 TextureMipMap(in sampler2D tex, in highp vec2[5] tcData, in lowp float lod)	\n"
+			m_part =
+				"uniform mediump vec2 uTextureSize[2];										\n"
+				"lowp vec4 TextureMipMap(in sampler2D tex, in highp vec2 tcData[5], in lowp float lod)	\n"
 				"{																					\n"
 				"  mediump vec2 texSize;															\n"
 				"  if (nCurrentTile == 0)															\n"
@@ -1873,7 +1928,7 @@ public:
 				;
 			if (config.generalEmulation.enableLOD == 0) {
 				// Fake mipmap
-				m_part =
+				m_part +=
 					"uniform lowp int uMaxTile;			\n"
 					"uniform mediump float uMinLod;		\n"
 					"														\n"
@@ -1885,7 +1940,7 @@ public:
 					"}														\n"
 				;
 			} else {
-				m_part =
+				m_part +=
 					"uniform lowp int uEnableLod;		\n"
 					"uniform mediump float uMinLod;		\n"
 					"uniform lowp int uMaxTile;			\n"
@@ -2102,7 +2157,7 @@ public:
 		if (m_glinfo.isGLES2) {
 			shaderPart +=
 				"uniform mediump vec2 uTextureSize[2];										\n"
-				"lowp vec4 TextureNearest(in sampler2D tex, in highp vec2[5] tcData)		\n"
+				"lowp vec4 TextureNearest(in sampler2D tex, in highp vec2 tcData[5])		\n"
 				"{																					\n"
 				"  mediump vec2 texSize;															\n"
 				"  if (nCurrentTile == 0)															\n"
@@ -2114,7 +2169,7 @@ public:
 				;
 			if (g_textureConvert.useYUVCoversion())
 				shaderPart +=
-				"lowp vec4 YUV_Convert(in sampler2D tex, in highp vec2[5] tcData, in lowp int convert, in lowp int format, in lowp vec4 prev)	\n"
+				"lowp vec4 YUV_Convert(in sampler2D tex, in highp vec2 tcData[5], in lowp int convert, in lowp int format, in lowp vec4 prev)	\n"
 				"{																	\n"
 				"  lowp vec4 texColor;												\n"
 				"  if (convert != 0) texColor = prev;								\n"
@@ -2137,7 +2192,7 @@ public:
 						// 3 point texture filtering.
 						// Original author: ArthurCarvalho
 						// GLSL implementation: twinaphex, mupen64plus-libretro project.
-						"lowp vec4 TextureFilter(in sampler2D tex, in highp vec2[5] tcData)		\n"
+						"lowp vec4 TextureFilter(in sampler2D tex, in highp vec2 tcData[5])		\n"
 						"{																					\n"
 						"  mediump vec2 texSize;															\n"
 						"  if (nCurrentTile == 0)															\n"
@@ -2158,7 +2213,7 @@ public:
 					shaderPart +=
 						// bilinear filtering.
 						//"uniform mediump vec2 uTextureSize[2];										\n" NOT NEEDED HERE?
-						"lowp vec4 TextureFilter(in sampler2D tex, in highp vec2[5] tcData)		\n"
+						"lowp vec4 TextureFilter(in sampler2D tex, in highp vec2 tcData[5])		\n"
 						"{																					\n"
 						"  mediump vec2 texSize;															\n"
 						"  if (nCurrentTile == 0)															\n"
@@ -2176,7 +2231,7 @@ public:
 						;
 				}
 				shaderPart +=
-					"lowp vec4 readTex(in sampler2D tex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
+					"lowp vec4 readTex(in sampler2D tex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
 					"{																			\n"
 					"  lowp vec4 texColor;														\n"
 					"  if (uTextureFilterMode == 0) texColor = TextureNearest(tex, tcData);		\n"
@@ -2201,7 +2256,7 @@ public:
 					"  return texel / float(uMSAASamples);										\n"
 					"}																			\n"
 					"																			\n"
-					"lowp vec4 readTexMS(in lowp sampler2DMS mstex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
+					"lowp vec4 readTexMS(in lowp sampler2DMS mstex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
 					"{																			\n"
 					"  mediump ivec2 itexCoord;													\n"
 					"  if (fbMonochrome == 3) {													\n"
@@ -2239,7 +2294,7 @@ public:
 		if (_glinfo.isGLES2) {
 			m_part =
 				"uniform mediump vec2 uTextureSize[2];										\n"
-				"lowp vec4 TextureNearest(in sampler2D tex, in highp vec2[5] tcData)		\n"
+				"lowp vec4 TextureNearest(in sampler2D tex, in highp vec2 tcData[5])		\n"
 				"{																					\n"
 				"  mediump vec2 texSize;															\n"
 				"  if (nCurrentTile == 0)															\n"
@@ -2248,7 +2303,7 @@ public:
 				"    texSize = uTextureSize[1];														\n"
 				"  return texture2D(tex, (tcData[0] + 0.5) / texSize);								\n"
 				"  }																				\n"
-				"lowp vec4 readTex(in sampler2D tex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
+				"lowp vec4 readTex(in sampler2D tex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
 				"{																			\n"
 				"  lowp vec4 texColor = TextureNearest(tex, tcData);						\n"
 				"  if (fbMonochrome == 1) texColor = vec4(texColor.r);						\n"
@@ -2270,7 +2325,7 @@ public:
 					"  return texel / float(uMSAASamples);										\n"
 					"}																			\n"
 					"																			\n"
-					"lowp vec4 readTexMS(in lowp sampler2DMS mstex, in highp vec2[5] tcData, in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
+					"lowp vec4 readTexMS(in lowp sampler2DMS mstex, in highp vec2 tcData[5], in lowp int fbMonochrome, in lowp int fbFixedAlpha)	\n"
 					"{																			\n"
 					"  mediump ivec2 itexCoord;													\n"
 					"  if (fbMonochrome == 3) {													\n"
@@ -2431,40 +2486,37 @@ public:
 			"	return texCoord;															\n"
 			"}																				\n"
 
-			"highp vec2 wrap2D(in highp vec2 tc, in highp float width) \n"
-			"{ \n"
-			"  highp float div = floor(tc.s/width);	\n"
-			"  return tc + vec2(-div*width, div);	\n"
-			"} \n"
+			"highp vec2 wrap2D(in highp vec2 tc, in highp vec2 size)						\n"
+			"{																				\n"
+			"  highp float divs = floor(tc.s / size.s);										\n"
+			"  highp float divt = floor((tc.t + divs) / size.t);							\n"
+			"  return vec2(tc.s - divs * size.s, tc.t + divs - divt*size.t);				\n"
+			"}																				\n"
 
-			"uniform mediump vec2 uTexSize0;		\n"
-			"highp vec2[5] textureEngine0(in highp vec2 texCoord) \n"
+			"uniform highp vec2 uTexSize0;		\n"
+			"void textureEngine0(in highp vec2 texCoord, out highp vec2 tcData[5]) \n"
 			"{  \n"
-			"  highp vec2[5] tcData; \n" // {tc00, tc01, tc10, tc11, frPart}
 			"  mediump vec2 intPart = floor(texCoord); \n"
 			"  highp vec2 tc00 = clampWrapMirror(intPart, uTexWrap0, uTexClamp0, uTexWrapEn0, uTexClampEn0, uTexMirrorEn0); \n"
 			"  highp vec2 tc11 = clampWrapMirror(intPart + vec2(1.0,1.0), uTexWrap0, uTexClamp0, uTexWrapEn0, uTexClampEn0, uTexMirrorEn0); \n"
-			"  tcData[0] = wrap2D(tc00, uTexSize0.s); \n"
-			"  tcData[3] = wrap2D(tc11, uTexSize0.s); \n"
+			"  tcData[0] = wrap2D(tc00, uTexSize0); \n"
+			"  tcData[3] = wrap2D(tc11, uTexSize0); \n"
 			"  tcData[1] = vec2(tcData[0].s, tcData[3].t); \n"
 			"  tcData[2] = vec2(tcData[3].s, tcData[0].t); \n"
 			"  tcData[4] = texCoord - intPart; \n"
-			"  return tcData;"
 			"}  \n"
 
-			"uniform mediump vec2 uTexSize1;		\n"
-			"highp vec2[5] textureEngine1(in highp vec2 texCoord) \n"
+			"uniform highp vec2 uTexSize1;		\n"
+			"void textureEngine1(in highp vec2 texCoord, out highp vec2 tcData[5]) \n"
 			"{  \n"
-			"  highp vec2[5] tcData; \n" // {tc00, tc01, tc10, tc11, frPart}
 			"  mediump vec2 intPart = floor(texCoord); \n"
 			"  highp vec2 tc00 = clampWrapMirror(intPart, uTexWrap1, uTexClamp1, uTexWrapEn1, uTexClampEn1, uTexMirrorEn1); \n"
 			"  highp vec2 tc11 = clampWrapMirror(intPart + vec2(1.0,1.0), uTexWrap1, uTexClamp1, uTexWrapEn1, uTexClampEn1, uTexMirrorEn1); \n"
-			"  tcData[0] = wrap2D(tc00, uTexSize1.s); \n"
-			"  tcData[3] = wrap2D(tc11, uTexSize1.s); \n"
+			"  tcData[0] = wrap2D(tc00, uTexSize1); \n"
+			"  tcData[3] = wrap2D(tc11, uTexSize1); \n"
 			"  tcData[1] = vec2(tcData[0].s, tcData[3].t); \n"
 			"  tcData[2] = vec2(tcData[3].s, tcData[0].t); \n"
 			"  tcData[4] = texCoord - intPart; \n"
-			"  return tcData;"
 			"}  \n"
 
 			;
@@ -2477,7 +2529,7 @@ public:
 	ShaderFragmentTextureEngineTex0(const opengl::GLInfo _glinfo)
 	{
 		m_part =
-			"tcData0 = textureEngine0(vTexCoord0); \n"
+			"textureEngine0(vTexCoord0, tcData0); \n"
 			;
 	}
 };
@@ -2487,7 +2539,7 @@ public:
 	ShaderFragmentTextureEngineTex1(const opengl::GLInfo _glinfo)
 	{
 		m_part =
-			"tcData1 = textureEngine1(vTexCoord1); \n"
+			"textureEngine1(vTexCoord1, tcData1); \n"
 			;
 	}
 };
@@ -2607,12 +2659,14 @@ CombinerInputs CombinerProgramBuilder::compileCombiner(const CombinerKey & _key,
 		m_callDither->write(ssShader);
 
 	if (config.generalEmulation.enableLegacyBlending == 0) {
-		if (g_cycleType <= G_CYC_2CYCLE)
+		if (g_cycleType <= G_CYC_2CYCLE) {
 			m_blender1->write(ssShader);
-		if (g_cycleType == G_CYC_2CYCLE)
-			m_blender2->write(ssShader);
+			if (g_cycleType == G_CYC_2CYCLE)
+				m_blender2->write(ssShader);
+			m_blenderAlpha->write(ssShader);
+		} else
+			ssShader << "  fragColor = clampedColor;" << std::endl;
 
-		ssShader << "  fragColor = clampedColor;" << std::endl;
 	}
 	else {
 		ssShader << "  fragColor = clampedColor;" << std::endl;
@@ -2827,8 +2881,9 @@ GLuint _createVertexShader(ShaderPart * _header, ShaderPart * _body, ShaderPart 
 }
 
 CombinerProgramBuilder::CombinerProgramBuilder(const opengl::GLInfo & _glinfo, opengl::CachedUseProgram * _useProgram)
-: m_blender1(new ShaderBlender1)
-, m_blender2(new ShaderBlender2)
+: m_blender1(new ShaderBlender1(_glinfo))
+, m_blender2(new ShaderBlender2(_glinfo))
+, m_blenderAlpha (new ShaderBlenderAlpha(_glinfo))
 , m_legacyBlender(new ShaderLegacyBlender)
 , m_clamp(new ShaderClamp)
 , m_signExtendColorC(new ShaderSignExtendColorC)

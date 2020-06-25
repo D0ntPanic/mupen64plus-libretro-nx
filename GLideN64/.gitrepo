@@ -6,7 +6,7 @@
 [subrepo]
 	remote = git@github.com:libretro/GLideN64.git
 	branch = rebase
-	commit = f0ac2dd915e499c4fdab9bbcb754532448ed51fc
-	parent = c7c08ca28b7edf5faabe293801d381583af8b50c
+	commit = 2780703199275c5803451fbf9f314e5b6d34fa23
+	parent = aaa44943199bb75c5868ce1046c3e486f904973a
 	method = rebase
 	cmdver = 0.4.0
